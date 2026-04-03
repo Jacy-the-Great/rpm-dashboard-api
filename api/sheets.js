@@ -9,7 +9,19 @@ function setCorsHeaders(res) {
 
 // Initialize Sheets API
 async function getSheetsClient() {
-  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT) {
+    throw new Error('GOOGLE_SERVICE_ACCOUNT environment variable not set');
+  }
+
+  let credentials;
+  try {
+    credentials = typeof process.env.GOOGLE_SERVICE_ACCOUNT === 'string'
+      ? JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT)
+      : process.env.GOOGLE_SERVICE_ACCOUNT;
+  } catch (e) {
+    console.error('Failed to parse credentials:', e.message);
+    throw new Error('Invalid GOOGLE_SERVICE_ACCOUNT format');
+  }
 
   const auth = new google.auth.GoogleAuth({
     credentials,
@@ -125,7 +137,7 @@ async function writeSheets(tasks, log) {
   });
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   setCorsHeaders(res);
 
   // Handle preflight
@@ -149,4 +161,4 @@ export default async function handler(req, res) {
     console.error('Error:', error);
     res.status(500).json({ error: error.message });
   }
-}
+};
