@@ -1,0 +1,10 @@
+{
+  "name": "rpm-dashboard-api",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "dependencies": {
+    "googleapis": "^118.0.0"
+  }
+}
