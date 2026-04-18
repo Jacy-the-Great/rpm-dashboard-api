@@ -7,25 +7,17 @@ function setCorsHeaders(res) {
 }
 
 async function getSheetsClient() {
-  if (!process.env.GOOGLE_SERVICE_ACCOUNT) {
-    throw new Error('GOOGLE_SERVICE_ACCOUNT environment variable not set');
-  }
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT) throw new Error('GOOGLE_SERVICE_ACCOUNT not set');
   let credentials;
   try {
     credentials = typeof process.env.GOOGLE_SERVICE_ACCOUNT === 'string'
       ? JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT)
       : process.env.GOOGLE_SERVICE_ACCOUNT;
-  } catch (e) {
-    throw new Error('Invalid GOOGLE_SERVICE_ACCOUNT format');
-  }
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
+  } catch (e) { throw new Error('Invalid GOOGLE_SERVICE_ACCOUNT format'); }
+  const auth = new google.auth.GoogleAuth({ credentials, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
   return google.sheets({ version: 'v4', auth });
 }
 
-// Ensure a sheet tab exists; create it if not
 async function ensureSheetExists(sheets, spreadsheetId, sheetTitle) {
   try {
     const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
@@ -37,52 +29,34 @@ async function ensureSheetExists(sheets, spreadsheetId, sheetTitle) {
       });
       console.log(`Created sheet tab: ${sheetTitle}`);
     }
-  } catch (e) {
-    console.error(`Failed to ensure sheet ${sheetTitle} exists:`, e.message);
-  }
+  } catch (e) { console.error(`Failed to ensure sheet ${sheetTitle}:`, e.message); }
 }
 
-function safeJson(str) {
-  try { return JSON.parse(str); } catch { return []; }
-}
-
-function toBool(val) {
-  return val === true || val === 'TRUE' || val === 'true';
-}
+function safeJson(str) { try { return JSON.parse(str); } catch { return []; } }
+function toBool(v) { return v === true || v === 'TRUE' || v === 'true'; }
 
 async function readSheets() {
   const sheets = await getSheetsClient();
   const spreadsheetId = '1SK3hsYiff-P3KK96k7cEiFhORB25BROFzS5ADE3XACM';
 
-  // Tasks — expanded to A:L (12 columns)
-  const tasksResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'Tasks!A:L',
-  });
+  // Tasks A:N — 14 columns (Wave 2 adds delegateIntent col M, delegatedTo col N)
+  const tasksRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:N' });
 
-  // Log — unchanged A:E
-  const logResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'Log!A:E',
-  });
+  // Log A:F — 6 columns (Wave 2 adds delegatedTo col F)
+  const logRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Log!A:F' });
 
-  // Categories — new sheet, may not exist yet
+  // Categories A:H
   let categoriesData = [];
   try {
-    const catResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: 'Categories!A:H',
-    });
-    categoriesData = catResponse.data.values || [];
-  } catch (e) {
-    console.log('Categories sheet not found, returning empty array');
-  }
+    const catRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Categories!A:H' });
+    categoriesData = catRes.data.values || [];
+  } catch (e) { console.log('Categories sheet not found'); }
 
-  const taskData  = tasksResponse.data.values || [];
-  const logData   = logResponse.data.values   || [];
+  const taskData = tasksRes.data.values || [];
+  const logData  = logRes.data.values   || [];
 
-  // Tasks: id, stream, text, pri, dueDate, note, done, subs(JSON),
-  //        categoryId, createdAt, isDailyVictory, isWeeklyFocus
+  // Tasks: id, stream, text, pri, dueDate, note, done, subs, categoryId,
+  //        createdAt, isDailyVictory, isWeeklyFocus, delegateIntent, delegatedTo
   const tasks = taskData.slice(1).map(row => ({
     id:             row[0]  || '',
     stream:         row[1]  || '',
@@ -96,14 +70,18 @@ async function readSheets() {
     createdAt:      row[9]  || '',
     isDailyVictory: toBool(row[10]),
     isWeeklyFocus:  toBool(row[11]),
+    delegateIntent: toBool(row[12]),
+    delegatedTo:    row[13] || '',
   }));
 
+  // Log: taskId, completedAt, dueDate, daysLate, weekStart, delegatedTo
   const log = logData.slice(1).map(row => ({
     taskId:      row[0] || '',
     completedAt: row[1] || '',
     dueDate:     row[2] || '',
     daysLate:    row[3] !== undefined ? row[3] : null,
     weekStart:   row[4] || '',
+    delegatedTo: row[5] || '',
   }));
 
   // Categories: id, name, color, vision, purpose, result, createdAt, archived
@@ -125,93 +103,60 @@ async function writeSheets(tasks, log, categories) {
   const sheets = await getSheetsClient();
   const spreadsheetId = '1SK3hsYiff-P3KK96k7cEiFhORB25BROFzS5ADE3XACM';
 
-  // Ensure Categories sheet exists before writing
   await ensureSheetExists(sheets, spreadsheetId, 'Categories');
 
-  // Tasks data — 12 columns
+  // Tasks — 14 columns A:N
   const tasksData = [
-    ['id','stream','text','pri','dueDate','note','done','subs','categoryId','createdAt','isDailyVictory','isWeeklyFocus'],
+    ['id','stream','text','pri','dueDate','note','done','subs','categoryId','createdAt','isDailyVictory','isWeeklyFocus','delegateIntent','delegatedTo'],
     ...(tasks || []).map(t => [
-      t.id        || '',
-      t.stream    || '',
-      t.text      || '',
-      t.pri       || 'normal',
-      t.dueDate   || '',
-      t.note      || '',
-      t.done      || false,
+      t.id || '', t.stream || '', t.text || '', t.pri || 'normal',
+      t.dueDate || '', t.note || '', t.done || false,
       JSON.stringify(t.subs || []),
-      t.categoryId     || '',
-      t.createdAt      || '',
-      t.isDailyVictory || false,
-      t.isWeeklyFocus  || false,
+      t.categoryId || '', t.createdAt || '',
+      t.isDailyVictory || false, t.isWeeklyFocus || false,
+      t.delegateIntent || false, t.delegatedTo || '',
     ])
   ];
 
-  // Log data — 5 columns (unchanged)
+  // Log — 6 columns A:F
   const logData = [
-    ['taskId','completedAt','dueDate','daysLate','weekStart'],
+    ['taskId','completedAt','dueDate','daysLate','weekStart','delegatedTo'],
     ...(log || []).map(e => [
-      e.taskId      || '',
-      e.completedAt || '',
-      e.dueDate     || '',
-      e.daysLate    !== null && e.daysLate !== undefined ? e.daysLate : '',
-      e.weekStart   || '',
+      e.taskId || '', e.completedAt || '', e.dueDate || '',
+      e.daysLate !== null && e.daysLate !== undefined ? e.daysLate : '',
+      e.weekStart || '', e.delegatedTo || '',
     ])
   ];
 
-  // Categories data — 8 columns
+  // Categories — 8 columns A:H
   const categoriesData = [
     ['id','name','color','vision','purpose','result','createdAt','archived'],
     ...(categories || []).map(c => [
-      c.id        || '',
-      c.name      || '',
-      c.color     || '#888',
-      c.vision    || '',
-      c.purpose   || '',
-      c.result    || '',
-      c.createdAt || '',
-      c.archived  || false,
+      c.id || '', c.name || '', c.color || '#888',
+      c.vision || '', c.purpose || '', c.result || '',
+      c.createdAt || '', c.archived || false,
     ])
   ];
 
-  // Clear and write Tasks (expanded range)
-  await sheets.spreadsheets.values.clear({ spreadsheetId, range: 'Tasks!A:L' });
-  await sheets.spreadsheets.values.append({
-    spreadsheetId, range: 'Tasks!A1', valueInputOption: 'USER_ENTERED',
-    resource: { values: tasksData }
-  });
+  await sheets.spreadsheets.values.clear({ spreadsheetId, range: 'Tasks!A:N' });
+  await sheets.spreadsheets.values.append({ spreadsheetId, range: 'Tasks!A1', valueInputOption: 'USER_ENTERED', resource: { values: tasksData } });
 
-  // Clear and write Log
-  await sheets.spreadsheets.values.clear({ spreadsheetId, range: 'Log!A:E' });
-  await sheets.spreadsheets.values.append({
-    spreadsheetId, range: 'Log!A1', valueInputOption: 'USER_ENTERED',
-    resource: { values: logData }
-  });
+  await sheets.spreadsheets.values.clear({ spreadsheetId, range: 'Log!A:F' });
+  await sheets.spreadsheets.values.append({ spreadsheetId, range: 'Log!A1', valueInputOption: 'USER_ENTERED', resource: { values: logData } });
 
-  // Clear and write Categories
   await sheets.spreadsheets.values.clear({ spreadsheetId, range: 'Categories!A:H' });
-  await sheets.spreadsheets.values.append({
-    spreadsheetId, range: 'Categories!A1', valueInputOption: 'USER_ENTERED',
-    resource: { values: categoriesData }
-  });
+  await sheets.spreadsheets.values.append({ spreadsheetId, range: 'Categories!A1', valueInputOption: 'USER_ENTERED', resource: { values: categoriesData } });
 }
 
 module.exports = async function handler(req, res) {
   setCorsHeaders(res);
-
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
-
+  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
   try {
     if (req.method === 'GET') {
-      const data = await readSheets();
-      res.status(200).json(data);
+      res.status(200).json(await readSheets());
     } else if (req.method === 'POST') {
       const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-      const { tasks, log, categories } = body;
-      await writeSheets(tasks, log, categories);
+      await writeSheets(body.tasks, body.log, body.categories);
       res.status(200).json({ status: 'ok' });
     } else {
       res.status(405).json({ error: 'Method not allowed' });
