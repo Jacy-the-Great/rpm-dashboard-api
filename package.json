@@ -6,6 +6,7 @@
   },
   "dependencies": {
     "googleapis": "^118.0.0",
-    "openai": "^4.x.x"
+    "openai": "^4.x.x",
+    "resend": "^3.x.x"
   }
 }
