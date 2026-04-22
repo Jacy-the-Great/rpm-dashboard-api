@@ -54,20 +54,17 @@ DUE: [YYYY-MM-DD or "today"/"tomorrow"/"next week"]
 SUBTASKS: [bullet list with dashes if complex] OR [omit if single task]
 NOTE: [any additional context]`;
 
-  const response = await client.messages.create({
+  const response = await client.chat.completions.create({
     model: 'gpt-4o-mini',
     max_tokens: 1000,
     temperature: 0.7,
-    system: systemPrompt,
     messages: [
-      {
-        role: 'user',
-        content: message,
-      },
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: message },
     ],
   });
 
-  return response.content[0].type === 'text' ? response.content[0].text : '';
+  return response.choices[0].message.content || '';
 }
 
 function parseTaskFromResponse(aiText) {
