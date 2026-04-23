@@ -35,9 +35,12 @@ async function ensureSheetExists(sheets, spreadsheetId, sheetTitle) {
 function safeJson(str) { try { return JSON.parse(str); } catch { return []; } }
 function toBool(v) { return v === true || v === 'TRUE' || v === 'true'; }
 
+const PRIMARY_ID   = '1SK3hsYiff-P3KK96k7cEiFhORB25BROFzS5ADE3XACM'; // original master
+const BACKUP_ID    = process.env.BACKUP_SHEET_ID || '1YlMq2y2HjJKkuWCmFVtCUH0mL0mROrb4VDTlPIO6dHQ'; // jacymacnee1 backup
+
 async function readSheets() {
   const sheets = await getSheetsClient();
-  const spreadsheetId = '1YlMq2y2HjJKkuWCmFVtCUH0mL0mROrb4VDTlPIO6dHQ';
+  const spreadsheetId = PRIMARY_ID;
 
   // Tasks A:N — 14 columns (Wave 2 adds delegateIntent col M, delegatedTo col N)
   const tasksRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:N' });
@@ -99,15 +102,7 @@ async function readSheets() {
   return { tasks, log, categories };
 }
 
-async function writeSheets(tasks, log, categories) {
-  const sheets = await getSheetsClient();
-  const spreadsheetId = '1YlMq2y2HjJKkuWCmFVtCUH0mL0mROrb4VDTlPIO6dHQ';
-
-  await ensureSheetExists(sheets, spreadsheetId, 'Tasks');
-  await ensureSheetExists(sheets, spreadsheetId, 'Log');
-  await ensureSheetExists(sheets, spreadsheetId, 'Categories');
-
-  // Tasks — 14 columns A:N
+function buildSheetData(tasks, log, categories) {
   const tasksData = [
     ['id','stream','text','pri','dueDate','note','done','subs','categoryId','createdAt','isDailyVictory','isWeeklyFocus','delegateIntent','delegatedTo'],
     ...(tasks || []).map(t => [
@@ -119,8 +114,6 @@ async function writeSheets(tasks, log, categories) {
       t.delegateIntent || false, t.delegatedTo || '',
     ])
   ];
-
-  // Log — 6 columns A:F
   const logData = [
     ['taskId','completedAt','dueDate','daysLate','weekStart','delegatedTo'],
     ...(log || []).map(e => [
@@ -129,8 +122,6 @@ async function writeSheets(tasks, log, categories) {
       e.weekStart || '', e.delegatedTo || '',
     ])
   ];
-
-  // Categories — 8 columns A:H
   const categoriesData = [
     ['id','name','color','vision','purpose','result','createdAt','archived'],
     ...(categories || []).map(c => [
@@ -139,15 +130,35 @@ async function writeSheets(tasks, log, categories) {
       c.createdAt || '', c.archived || false,
     ])
   ];
+  return { tasksData, logData, categoriesData };
+}
 
+async function writeToSheet(sheets, spreadsheetId, tasksData, logData, categoriesData) {
+  await ensureSheetExists(sheets, spreadsheetId, 'Tasks');
+  await ensureSheetExists(sheets, spreadsheetId, 'Log');
+  await ensureSheetExists(sheets, spreadsheetId, 'Categories');
   await sheets.spreadsheets.values.clear({ spreadsheetId, range: 'Tasks!A:N' });
   await sheets.spreadsheets.values.append({ spreadsheetId, range: 'Tasks!A1', valueInputOption: 'USER_ENTERED', resource: { values: tasksData } });
-
   await sheets.spreadsheets.values.clear({ spreadsheetId, range: 'Log!A:F' });
   await sheets.spreadsheets.values.append({ spreadsheetId, range: 'Log!A1', valueInputOption: 'USER_ENTERED', resource: { values: logData } });
-
   await sheets.spreadsheets.values.clear({ spreadsheetId, range: 'Categories!A:H' });
   await sheets.spreadsheets.values.append({ spreadsheetId, range: 'Categories!A1', valueInputOption: 'USER_ENTERED', resource: { values: categoriesData } });
+}
+
+async function writeSheets(tasks, log, categories) {
+  const sheets = await getSheetsClient();
+  const { tasksData, logData, categoriesData } = buildSheetData(tasks, log, categories);
+
+  // Write to primary — awaited (blocks response)
+  await writeToSheet(sheets, PRIMARY_ID, tasksData, logData, categoriesData);
+  console.log('Primary sheet written:', PRIMARY_ID);
+
+  // Write to backup — fire and forget (never blocks or fails the main request)
+  if (BACKUP_ID) {
+    writeToSheet(sheets, BACKUP_ID, tasksData, logData, categoriesData)
+      .then(() => console.log('Backup sheet written:', BACKUP_ID))
+      .catch(e => console.warn('Backup write failed (non-critical):', e.message));
+  }
 }
 
 module.exports = async function handler(req, res) {
