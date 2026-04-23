@@ -15,7 +15,7 @@ function safeJson(s) { try { return JSON.parse(s); } catch { return []; } }
 // ── Load data from Sheets ─────────────────────────────────────────────────────
 async function loadData() {
   const sheets = await getSheetsClient();
-  const spreadsheetId = '1SK3hsYiff-P3KK96k7cEiFhORB25BROFzS5ADE3XACM';
+  const spreadsheetId = '1YlMq2y2HjJKkuWCmFVtCUH0mL0mROrb4VDTlPIO6dHQ';
 
   const [tasksRes, logRes, catRes] = await Promise.all([
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:N' }),

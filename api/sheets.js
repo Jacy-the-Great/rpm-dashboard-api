@@ -37,7 +37,7 @@ function toBool(v) { return v === true || v === 'TRUE' || v === 'true'; }
 
 async function readSheets() {
   const sheets = await getSheetsClient();
-  const spreadsheetId = '1SK3hsYiff-P3KK96k7cEiFhORB25BROFzS5ADE3XACM';
+  const spreadsheetId = '1YlMq2y2HjJKkuWCmFVtCUH0mL0mROrb4VDTlPIO6dHQ';
 
   // Tasks A:N — 14 columns (Wave 2 adds delegateIntent col M, delegatedTo col N)
   const tasksRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:N' });
@@ -101,7 +101,7 @@ async function readSheets() {
 
 async function writeSheets(tasks, log, categories) {
   const sheets = await getSheetsClient();
-  const spreadsheetId = '1SK3hsYiff-P3KK96k7cEiFhORB25BROFzS5ADE3XACM';
+  const spreadsheetId = '1YlMq2y2HjJKkuWCmFVtCUH0mL0mROrb4VDTlPIO6dHQ';
 
   await ensureSheetExists(sheets, spreadsheetId, 'Categories');
 
