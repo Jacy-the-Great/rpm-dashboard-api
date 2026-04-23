@@ -103,6 +103,8 @@ async function writeSheets(tasks, log, categories) {
   const sheets = await getSheetsClient();
   const spreadsheetId = '1YlMq2y2HjJKkuWCmFVtCUH0mL0mROrb4VDTlPIO6dHQ';
 
+  await ensureSheetExists(sheets, spreadsheetId, 'Tasks');
+  await ensureSheetExists(sheets, spreadsheetId, 'Log');
   await ensureSheetExists(sheets, spreadsheetId, 'Categories');
 
   // Tasks — 14 columns A:N
