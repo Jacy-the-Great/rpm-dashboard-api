@@ -55,6 +55,14 @@ async function readSheets() {
     categoriesData = catRes.data.values || [];
   } catch (e) { console.log('Categories sheet not found'); }
 
+  // Priorities — stored as JSON blob in Priorities!A1
+  let priorities = { quarter: '', month: '', weekly: [], threeToThrive: [] };
+  try {
+    const prioRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Priorities!A1' });
+    const raw = (prioRes.data.values || [])[0]?.[0];
+    if (raw) priorities = { ...priorities, ...JSON.parse(raw) };
+  } catch (e) { console.log('Priorities sheet not found, using defaults'); }
+
   const taskData = tasksRes.data.values || [];
   const logData  = logRes.data.values   || [];
 
@@ -99,7 +107,7 @@ async function readSheets() {
     archived:  toBool(row[7]),
   }));
 
-  return { tasks, log, categories };
+  return { tasks, log, categories, priorities };
 }
 
 function buildSheetData(tasks, log, categories) {
@@ -133,7 +141,7 @@ function buildSheetData(tasks, log, categories) {
   return { tasksData, logData, categoriesData };
 }
 
-async function writeToSheet(sheets, spreadsheetId, tasksData, logData, categoriesData) {
+async function writeToSheet(sheets, spreadsheetId, tasksData, logData, categoriesData, priorities) {
   await ensureSheetExists(sheets, spreadsheetId, 'Tasks');
   await ensureSheetExists(sheets, spreadsheetId, 'Log');
   await ensureSheetExists(sheets, spreadsheetId, 'Categories');
@@ -143,19 +151,26 @@ async function writeToSheet(sheets, spreadsheetId, tasksData, logData, categorie
   await sheets.spreadsheets.values.append({ spreadsheetId, range: 'Log!A1', valueInputOption: 'USER_ENTERED', resource: { values: logData } });
   await sheets.spreadsheets.values.clear({ spreadsheetId, range: 'Categories!A:H' });
   await sheets.spreadsheets.values.append({ spreadsheetId, range: 'Categories!A1', valueInputOption: 'USER_ENTERED', resource: { values: categoriesData } });
+  if (priorities) {
+    await ensureSheetExists(sheets, spreadsheetId, 'Priorities');
+    await sheets.spreadsheets.values.update({
+      spreadsheetId, range: 'Priorities!A1', valueInputOption: 'USER_ENTERED',
+      resource: { values: [[JSON.stringify(priorities)]] }
+    });
+  }
 }
 
-async function writeSheets(tasks, log, categories) {
+async function writeSheets(tasks, log, categories, priorities) {
   const sheets = await getSheetsClient();
   const { tasksData, logData, categoriesData } = buildSheetData(tasks, log, categories);
 
   // Write to primary — awaited (blocks response)
-  await writeToSheet(sheets, PRIMARY_ID, tasksData, logData, categoriesData);
+  await writeToSheet(sheets, PRIMARY_ID, tasksData, logData, categoriesData, priorities);
   console.log('Primary sheet written:', PRIMARY_ID);
 
   // Write to backup — fire and forget (never blocks or fails the main request)
   if (BACKUP_ID) {
-    writeToSheet(sheets, BACKUP_ID, tasksData, logData, categoriesData)
+    writeToSheet(sheets, BACKUP_ID, tasksData, logData, categoriesData, priorities)
       .then(() => console.log('Backup sheet written:', BACKUP_ID))
       .catch(e => console.warn('Backup write failed (non-critical):', e.message));
   }
@@ -169,7 +184,7 @@ module.exports = async function handler(req, res) {
       res.status(200).json(await readSheets());
     } else if (req.method === 'POST') {
       const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-      await writeSheets(body.tasks, body.log, body.categories);
+      await writeSheets(body.tasks, body.log, body.categories, body.priorities);
       res.status(200).json({ status: 'ok' });
     } else {
       res.status(405).json({ error: 'Method not allowed' });

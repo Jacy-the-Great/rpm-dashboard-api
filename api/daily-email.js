@@ -17,10 +17,11 @@ async function loadData() {
   const sheets = await getSheetsClient();
   const spreadsheetId = '1SK3hsYiff-P3KK96k7cEiFhORB25BROFzS5ADE3XACM';
 
-  const [tasksRes, logRes, catRes] = await Promise.all([
+  const [tasksRes, logRes, catRes, prioRes] = await Promise.all([
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:N' }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Log!A:F' }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Categories!A:H' }).catch(() => ({ data: { values: [] } })),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Priorities!A1' }).catch(() => ({ data: { values: [] } })),
   ]);
 
   const tasks = (tasksRes.data.values || []).slice(1).map(r => ({
@@ -43,7 +44,13 @@ async function loadData() {
     createdAt: r[6] || '', archived: toBool(r[7]),
   }));
 
-  return { tasks, log, categories };
+  let priorities = { quarter: '', month: '', weekly: [], threeToThrive: [] };
+  try {
+    const raw = (prioRes.data.values || [])[0]?.[0];
+    if (raw) priorities = { ...priorities, ...JSON.parse(raw) };
+  } catch (e) { console.log('Could not parse priorities'); }
+
+  return { tasks, log, categories, priorities };
 }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
@@ -317,8 +324,8 @@ module.exports = async function handler(req, res) {
     const today = todayAEST();
     console.log(`Generating daily briefing for ${today}`);
 
-    const { tasks, log, categories } = await loadData();
-    const briefingData = computeBriefing(tasks, log, categories, today);
+    const { tasks, log, categories, priorities } = await loadData();
+    const briefingData = { ...computeBriefing(tasks, log, categories, today), priorities };
 
     console.log(`Loaded: ${tasks.length} tasks, ${briefingData.overdue.length} overdue, ${briefingData.dueToday.length} due today`);
 
