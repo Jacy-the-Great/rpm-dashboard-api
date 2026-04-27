@@ -13,6 +13,10 @@
     {
       "path": "/api/daily-email",
       "schedule": "0 21 * * *"
+    },
+    {
+      "path": "/api/weekly-email",
+      "schedule": "0 21 * * 5"
     }
   ]
 }

@@ -63,6 +63,9 @@ function daysDiff(a, b) {
 }
 
 // ── Compute briefing data ─────────────────────────────────────────────────────
+function leafCount(t) { return 1 + (t.subs || []).length; }
+function doneCount(t) { return (t.done ? 1 : 0) + ((t.subs || []).filter(s => s.done).length); }
+
 function computeBriefing(tasks, log, categories, today) {
   const pending = tasks.filter(t => !t.done);
   const overdue = pending.filter(t => t.dueDate && t.dueDate < today);
@@ -71,13 +74,17 @@ function computeBriefing(tasks, log, categories, today) {
   const pendingDelegations = pending.filter(t => t.delegateIntent);
   const weeklyFocus = pending.filter(t => t.isWeeklyFocus);
 
+  // Total items and done items (matching dashboard leafCount logic)
+  let totalItems = 0, doneItems = 0;
+  tasks.forEach(t => { totalItems += leafCount(t); doneItems += doneCount(t); });
+  const openItems = totalItems - doneItems;
+
   // Completion rate: last 7 days
   const sevenDaysAgo = new Date(today + 'T00:00:00');
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
   const sevenAgo = sevenDaysAgo.toISOString().slice(0, 10);
   const recentLog = log.filter(e => e.completedAt >= sevenAgo);
-  const completionRate = tasks.length > 0
-    ? Math.round((tasks.filter(t => t.done).length / tasks.length) * 100) : 0;
+  const completionRate = totalItems > 0 ? Math.round(doneItems / totalItems * 100) : 0;
 
   // Category task counts
   const catStats = categories.filter(c => !c.archived).map(c => {
@@ -86,12 +93,12 @@ function computeBriefing(tasks, log, categories, today) {
     return { ...c, total, done, open: total - done, pct: total > 0 ? Math.round(done / total * 100) : 0 };
   }).filter(c => c.total > 0);
 
-  return { pending, overdue, dueToday, victories, pendingDelegations, weeklyFocus, completionRate, recentLog, catStats };
+  return { pending, overdue, dueToday, victories, pendingDelegations, weeklyFocus, completionRate, recentLog, catStats, totalItems, doneItems, openItems };
 }
 
 // ── AI Synthesis ──────────────────────────────────────────────────────────────
 async function generateBriefing(data, categories, today) {
-  const { overdue, dueToday, victories, pendingDelegations, pending, completionRate, weeklyFocus, catStats } = data;
+  const { overdue, dueToday, victories, pendingDelegations, pending, completionRate, weeklyFocus, catStats, openItems, totalItems } = data;
 
   const catVisionStr = categories.filter(c => !c.archived && c.vision)
     .map(c => `- ${c.name}: ${c.vision}`)
@@ -123,11 +130,19 @@ async function generateBriefing(data, categories, today) {
     .map(c => `• ${c.name}: ${c.done}/${c.total} done (${c.pct}%)`)
     .join('\n');
 
+  const prioStr = [
+    data.priorities?.quarter ? `Quarterly priority: ${data.priorities.quarter}` : '',
+    data.priorities?.month   ? `Monthly priority: ${data.priorities.month}` : '',
+    data.priorities?.weekly?.length ? `This week's focus:\n${data.priorities.weekly.map(w => `  • ${w}`).join('\n')}` : '',
+    data.priorities?.threeToThrive?.filter(Boolean).length ? `3 to Thrive (today):\n${data.priorities.threeToThrive.filter(Boolean).map(t => `  • ${t}`).join('\n')}` : '',
+  ].filter(Boolean).join('\n');
+
   const prompt = `You are Jacy's personal strategic assistant preparing their morning briefing for ${today}.
 
 JACY'S RPM VISION (what drives their goals):
 ${catVisionStr || 'Not yet defined'}
 
+${prioStr ? `JACY'S STRATEGIC PRIORITIES:\n${prioStr}\n` : ''}
 TODAY'S SITUATION:
 Overdue tasks (${overdue.length} total):
 ${overdueStr}
@@ -144,7 +159,7 @@ ${topPendingStr}
 Pending delegations (${pendingDelegations.length}):
 ${delegationsStr}
 
-Overall completion rate: ${completionRate}%
+Overall completion rate: ${completionRate}% (${totalItems - openItems}/${totalItems} items done)
 Tasks completed in last 7 days: ${data.recentLog.length}
 
 Category progress:
@@ -177,7 +192,7 @@ Keep the total under 300 words. Write in second person ("You have...", "Your..."
 
 // ── HTML Email ────────────────────────────────────────────────────────────────
 function buildEmail(briefingText, data, today) {
-  const { overdue, dueToday, victories, pendingDelegations, completionRate } = data;
+  const { overdue, dueToday, victories, pendingDelegations, completionRate, openItems, totalItems } = data;
 
   const priColor = { urgent: '#a32d2d', priority: '#993c1d', normal: '#555', backburner: '#888' };
 
@@ -216,7 +231,7 @@ function buildEmail(briefingText, data, today) {
     <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">RPM Daily Briefing</div>
     <div style="font-size:20px;font-weight:700;color:#fff">${fmtToday}</div>
     <div style="display:flex;gap:16px;margin-top:12px;flex-wrap:wrap">
-      <span style="font-size:12px;color:#aaa">📋 ${data.pending.length} open tasks</span>
+      <span style="font-size:12px;color:#aaa">📋 ${openItems} open items</span>
       <span style="font-size:12px;color:${overdue.length > 0 ? '#f09595' : '#aaa'}">🔴 ${overdue.length} overdue</span>
       <span style="font-size:12px;color:#aaa">📅 ${dueToday.length} due today</span>
       <span style="font-size:12px;color:#aaa">✅ ${completionRate}% complete</span>
