@@ -14,11 +14,12 @@ function safeJson(s) { try { return JSON.parse(s); } catch { return []; } }
 async function loadData() {
   const sheets = await getSheetsClient();
   const spreadsheetId = '1SK3hsYiff-P3KK96k7cEiFhORB25BROFzS5ADE3XACM';
-  const [tasksRes, logRes, catRes, prioRes] = await Promise.all([
+  const [tasksRes, logRes, catRes, prioRes, stratRes] = await Promise.all([
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:N' }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Log!A:F' }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Categories!A:H' }).catch(() => ({ data: { values: [] } })),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Priorities!A1' }).catch(() => ({ data: { values: [] } })),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Strategy!A1' }).catch(() => ({ data: { values: [] } })),
   ]);
   const tasks = (tasksRes.data.values || []).slice(1).map(r => ({
     id: r[0] || '', stream: r[1] || '', text: r[2] || '', pri: r[3] || 'normal',
@@ -43,7 +44,13 @@ async function loadData() {
     if (raw) priorities = { ...priorities, ...JSON.parse(raw) };
   } catch (e) { console.log('Could not parse priorities'); }
 
-  return { tasks, log, categories, priorities };
+  let strategy = null;
+  try {
+    const raw = (stratRes.data.values || [])[0]?.[0];
+    if (raw) strategy = JSON.parse(raw);
+  } catch (e) { console.log('Could not parse strategy'); }
+
+  return { tasks, log, categories, priorities, strategy };
 }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
@@ -148,7 +155,7 @@ function computeWeekly(tasks, log, categories, today) {
 }
 
 // ── AI weekly briefing ────────────────────────────────────────────────────────
-async function generateWeeklyBriefing(data, categories, priorities, today) {
+async function generateWeeklyBriefing(data, categories, priorities, today, strategy) {
   const {
     completedThisWeek, completedCount, lastWeekCount,
     weeklyFocus, weeklyFocusDone,
@@ -161,6 +168,12 @@ async function generateWeeklyBriefing(data, categories, priorities, today) {
   const catVisionStr = categories.filter(c => !c.archived && (c.vision || c.result))
     .map(c => `- ${c.name}${c.vision ? ': Vision — ' + c.vision : ''}${c.result ? ' | 90-day goal — ' + c.result : ''}`)
     .join('\n');
+
+  const strategyStr = strategy ? (strategy.categories || [])
+    .filter(c => c.score >= 5)
+    .slice(0, 5)
+    .map(c => `- ${c.name}: 90-day result = ${(c.ninetyDayResult || '').slice(0, 100)}`)
+    .join('\n') : '';
 
   const prioStr = [
     priorities.quarter ? `Quarterly: ${priorities.quarter}` : '',
@@ -200,6 +213,7 @@ async function generateWeeklyBriefing(data, categories, priorities, today) {
 RPM VISION & GOALS:
 ${catVisionStr || 'Not yet defined'}
 
+${strategyStr ? `TOP STRATEGIC CATEGORIES (score 5+):\n${strategyStr}\n` : ''}
 STRATEGIC PRIORITIES:
 ${prioStr || 'Not set — encourage Jacy to set these in the dashboard'}
 
@@ -230,7 +244,7 @@ ${pendingDelegations.slice(0, 5).map(t => `• ${t.text}${t.delegatedTo ? ' → 
 TASKS SITTING LONGEST (possible procrastination):
 ${oldStr}
 
-Write Jacy's WEEKLY RPM review. Be direct, analytical, and honest. This is a strategic business review, not a pep talk. Structure:
+Write Jacy's WEEKLY RPM review. Be direct, sharp, and constructive. Acknowledge specific wins. For every problem you identify, offer a concrete suggestion. Do not repeat the same observations. Be a trusted strategic partner. Structure:
 
 **WEEK IN REVIEW** (2-3 sentences): Honest assessment — strong week or weak? How does it track against priorities?
 
@@ -422,12 +436,12 @@ module.exports = async function handler(req, res) {
     const today = todayAEST();
     console.log(`Generating weekly briefing for week ending ${today}`);
 
-    const { tasks, log, categories, priorities } = await loadData();
+    const { tasks, log, categories, priorities, strategy } = await loadData();
 
     const weeklyData = computeWeekly(tasks, log, categories, today);
     console.log(`Weekly data: ${weeklyData.completedCount} completed, ${weeklyData.overdue.length} overdue`);
 
-    const briefingText = await generateWeeklyBriefing(weeklyData, categories, priorities, today);
+    const briefingText = await generateWeeklyBriefing(weeklyData, categories, priorities, today, strategy);
     console.log('Weekly AI briefing generated');
 
     const emailHtml = buildWeeklyEmail(briefingText, weeklyData, categories, today);

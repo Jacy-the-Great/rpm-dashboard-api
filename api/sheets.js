@@ -63,6 +63,14 @@ async function readSheets() {
     if (raw) priorities = { ...priorities, ...JSON.parse(raw) };
   } catch (e) { console.log('Priorities sheet not found, using defaults'); }
 
+  // Strategy — stored as JSON blob in Strategy!A1
+  let strategy = null;
+  try {
+    const stratRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Strategy!A1' });
+    const raw = (stratRes.data.values || [])[0]?.[0];
+    if (raw) strategy = JSON.parse(raw);
+  } catch (e) { console.log('Strategy sheet not found'); }
+
   const taskData = tasksRes.data.values || [];
   const logData  = logRes.data.values   || [];
 
@@ -107,7 +115,7 @@ async function readSheets() {
     archived:  toBool(row[7]),
   }));
 
-  return { tasks, log, categories, priorities };
+  return { tasks, log, categories, priorities, strategy };
 }
 
 function buildSheetData(tasks, log, categories) {

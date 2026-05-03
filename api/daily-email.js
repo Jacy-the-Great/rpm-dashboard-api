@@ -17,11 +17,12 @@ async function loadData() {
   const sheets = await getSheetsClient();
   const spreadsheetId = '1SK3hsYiff-P3KK96k7cEiFhORB25BROFzS5ADE3XACM';
 
-  const [tasksRes, logRes, catRes, prioRes] = await Promise.all([
+  const [tasksRes, logRes, catRes, prioRes, stratRes] = await Promise.all([
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:N' }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Log!A:F' }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Categories!A:H' }).catch(() => ({ data: { values: [] } })),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Priorities!A1' }).catch(() => ({ data: { values: [] } })),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Strategy!A1' }).catch(() => ({ data: { values: [] } })),
   ]);
 
   const tasks = (tasksRes.data.values || []).slice(1).map(r => ({
@@ -50,7 +51,13 @@ async function loadData() {
     if (raw) priorities = { ...priorities, ...JSON.parse(raw) };
   } catch (e) { console.log('Could not parse priorities'); }
 
-  return { tasks, log, categories, priorities };
+  let strategy = null;
+  try {
+    const raw = (stratRes.data.values || [])[0]?.[0];
+    if (raw) strategy = JSON.parse(raw);
+  } catch (e) { console.log('Could not parse strategy'); }
+
+  return { tasks, log, categories, priorities, strategy };
 }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
@@ -104,12 +111,18 @@ function computeBriefing(tasks, log, categories, today) {
 }
 
 // ── AI Synthesis ──────────────────────────────────────────────────────────────
-async function generateBriefing(data, categories, today) {
+async function generateBriefing(data, categories, today, strategy) {
   const { overdue, dueToday, victories, pendingDelegations, pending, completionRate, weeklyFocus, catStats, openItems, totalItems } = data;
 
   const catVisionStr = categories.filter(c => !c.archived && c.vision)
     .map(c => `- ${c.name}: ${c.vision}`)
     .join('\n');
+
+  const strategyStr = strategy ? (strategy.categories || [])
+    .filter(c => c.score >= 5)
+    .slice(0, 5)
+    .map(c => `- ${c.name}: 90-day result = ${(c.ninetyDayResult || '').slice(0, 100)}`)
+    .join('\n') : '';
 
   const overdueStr = overdue.slice(0, 8)
     .map(t => `• ${t.text} (${daysDiff(t.dueDate, today)}d late, ${t.stream})`)
@@ -149,6 +162,7 @@ async function generateBriefing(data, categories, today) {
 JACY'S RPM VISION (what drives their goals):
 ${catVisionStr || 'Not yet defined'}
 
+${strategyStr ? `TOP STRATEGIC CATEGORIES (score 5+):\n${strategyStr}\n` : ''}
 ${prioStr ? `JACY'S STRATEGIC PRIORITIES:\n${prioStr}\n` : ''}
 TODAY'S SITUATION:
 Overdue tasks (${overdue.length} total):
@@ -172,7 +186,7 @@ Tasks completed in last 7 days: ${data.recentLog.length}
 Category progress:
 ${catProgressStr}
 
-Write Jacy's morning briefing with the following structure. Be direct, insightful, and brief. This is a business partner speaking, not a life coach:
+Write Jacy's morning briefing with the following structure. Be direct, sharp, and constructive. Acknowledge specific wins. For every problem you identify, offer a concrete suggestion. Do not repeat the same observations. Be a trusted strategic partner.
 
 **STRATEGIC FOCUS** (2-3 sentences): What's the single most important thing to move on today and why? Reference their vision where relevant.
 
@@ -324,12 +338,12 @@ module.exports = async function handler(req, res) {
     const today = todayAEST();
     console.log(`Generating daily briefing for ${today}`);
 
-    const { tasks, log, categories, priorities } = await loadData();
+    const { tasks, log, categories, priorities, strategy } = await loadData();
     const briefingData = { ...computeBriefing(tasks, log, categories, today), priorities };
 
     console.log(`Loaded: ${tasks.length} tasks, ${briefingData.overdue.length} overdue, ${briefingData.dueToday.length} due today`);
 
-    const briefingText = await generateBriefing(briefingData, categories, today);
+    const briefingText = await generateBriefing(briefingData, categories, today, strategy);
     console.log('AI briefing generated');
 
     const emailHtml = buildEmail(briefingText, briefingData, today);
