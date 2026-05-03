@@ -20,9 +20,23 @@ async function callOpenAI(message, categories = [], streams = [], tasks = [], pr
       .join('\n');
   }
 
-  const streamList = streams && streams.length > 0
-    ? 'Available streams: ' + streams.join(', ')
-    : '';
+  // Streams arrive as either plain keys OR "id:name" pairs (e.g. "rpm-01:Physical Body")
+  // Build a display list and a lookup map so the AI can output the correct ID
+  let streamDisplay = '';
+  const streamIdMap = {}; // name.toLowerCase() -> id
+  if (streams && streams.length > 0) {
+    const parsed = streams.map(s => {
+      const colonIdx = s.indexOf(':');
+      if (colonIdx > -1) {
+        const id = s.slice(0, colonIdx);
+        const name = s.slice(colonIdx + 1);
+        streamIdMap[name.toLowerCase()] = id;
+        return `${id} (${name})`;
+      }
+      return s;
+    });
+    streamDisplay = 'Available streams (use the ID in STREAM field):\n' + parsed.join('\n');
+  }
 
   const overdueTasks = (tasks || []).filter(t => !t.done && t.dueDate && t.dueDate < new Date().toISOString().slice(0,10));
   const urgentTasks = (tasks || []).filter(t => !t.done && (t.pri === 'urgent' || t.pri === 'priority'));
@@ -43,7 +57,7 @@ ${priorities.weekly?.length ? '- This week: ' + priorities.weekly.join(', ') : '
 **MODE 2 — STRATEGIC ADVICE**: When the user asks a question, give sharp, concise strategic advice. Analyze their tasks and priorities. Be direct and insightful.
 
 ${categoryContext}
-${streamList}
+${streamDisplay}
 ${taskSummary}
 ${priorityContext}
 
@@ -54,10 +68,11 @@ TASK CREATION rules:
 - Do NOT suggest delegation unless asked
 - Do NOT invent due dates
 - Keep task text clean and concise
+- For STREAM: output the stream ID (e.g. rpm-01) NOT the name
 
 Task format (only include fields that are explicitly stated):
 TASK: [clean task text]
-STREAM: [matching stream/category from their plan, or omit if unclear]
+STREAM: [stream ID from the list above, e.g. rpm-01 — NOT the name]
 PRIORITY: [urgent/priority/normal/backburner — only if user stated this]
 DUE: [YYYY-MM-DD — only if user stated a date/timeframe]
 ASSIGNED_TO: [person name — only if user said to delegate to someone]
