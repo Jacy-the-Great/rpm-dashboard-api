@@ -149,7 +149,7 @@ function buildSheetData(tasks, log, categories) {
   return { tasksData, logData, categoriesData };
 }
 
-async function writeToSheet(sheets, spreadsheetId, tasksData, logData, categoriesData, priorities) {
+async function writeToSheet(sheets, spreadsheetId, tasksData, logData, categoriesData, priorities, rpmPlan) {
   await ensureSheetExists(sheets, spreadsheetId, 'Tasks');
   await ensureSheetExists(sheets, spreadsheetId, 'Log');
   await ensureSheetExists(sheets, spreadsheetId, 'Categories');
@@ -166,19 +166,26 @@ async function writeToSheet(sheets, spreadsheetId, tasksData, logData, categorie
       resource: { values: [[JSON.stringify(priorities)]] }
     });
   }
+  if (rpmPlan) {
+    await ensureSheetExists(sheets, spreadsheetId, 'Strategy');
+    await sheets.spreadsheets.values.update({
+      spreadsheetId, range: 'Strategy!A1', valueInputOption: 'USER_ENTERED',
+      resource: { values: [[JSON.stringify(rpmPlan)]] }
+    });
+  }
 }
 
-async function writeSheets(tasks, log, categories, priorities) {
+async function writeSheets(tasks, log, categories, priorities, rpmPlan) {
   const sheets = await getSheetsClient();
   const { tasksData, logData, categoriesData } = buildSheetData(tasks, log, categories);
 
   // Write to primary — awaited (blocks response)
-  await writeToSheet(sheets, PRIMARY_ID, tasksData, logData, categoriesData, priorities);
+  await writeToSheet(sheets, PRIMARY_ID, tasksData, logData, categoriesData, priorities, rpmPlan);
   console.log('Primary sheet written:', PRIMARY_ID);
 
   // Write to backup — fire and forget (never blocks or fails the main request)
   if (BACKUP_ID) {
-    writeToSheet(sheets, BACKUP_ID, tasksData, logData, categoriesData, priorities)
+    writeToSheet(sheets, BACKUP_ID, tasksData, logData, categoriesData, priorities, rpmPlan)
       .then(() => console.log('Backup sheet written:', BACKUP_ID))
       .catch(e => console.warn('Backup write failed (non-critical):', e.message));
   }
@@ -192,7 +199,7 @@ module.exports = async function handler(req, res) {
       res.status(200).json(await readSheets());
     } else if (req.method === 'POST') {
       const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-      await writeSheets(body.tasks, body.log, body.categories, body.priorities);
+      await writeSheets(body.tasks, body.log, body.categories, body.priorities, body.rpmPlan);
       res.status(200).json({ status: 'ok' });
     } else {
       res.status(405).json({ error: 'Method not allowed' });
