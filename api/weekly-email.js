@@ -156,7 +156,7 @@ function computeWeekly(tasks, log, categories, today) {
 }
 
 // ── AI weekly briefing ────────────────────────────────────────────────────────
-async function generateWeeklyBriefing(data, categories, priorities, today, strategy) {
+async function generateWeeklyBriefing(data, categories, priorities, today, strategy, tasks) {
   const {
     completedThisWeek, completedCount, lastWeekCount,
     weeklyFocus, weeklyFocusDone,
@@ -170,11 +170,35 @@ async function generateWeeklyBriefing(data, categories, priorities, today, strat
     .map(c => `- ${c.name}${c.vision ? ': Vision — ' + c.vision : ''}${c.result ? ' | 90-day goal — ' + c.result : ''}`)
     .join('\n');
 
-  const strategyStr = strategy ? (strategy.categories || [])
-    .filter(c => c.score >= 5)
-    .slice(0, 5)
-    .map(c => `- ${c.name}: 90-day result = ${(c.ninetyDayResult || '').slice(0, 100)}`)
-    .join('\n') : '';
+  // Child stream → parent RPM category mapping (mirrors CHILD_STREAMS in frontend)
+  const childStreamParents = { sales: 'rpm-08', innovation: 'rpm-08', marketing: 'rpm-08' };
+
+  // Per-RPM-category task health (using stream field, which IS the rpm category id)
+  const stratCatHealth = strategy ? (strategy.categories || []).map(cat => {
+    const linked = open.filter(t =>
+      t.stream === cat.id || childStreamParents[t.stream] === cat.id
+    );
+    const overdueLinked = linked.filter(t => t.dueDate && t.dueDate < today);
+    const doneLinked = (tasks || []).filter(t =>
+      (t.stream === cat.id || childStreamParents[t.stream] === cat.id) && t.done
+    );
+    return {
+      name: cat.name, score: cat.score || 0,
+      open: linked.length, overdue: overdueLinked.length, done: doneLinked.length,
+      ninetyDayResult: cat.ninetyDayResult || '',
+    };
+  }).filter(c => c.open > 0 || c.overdue > 0 || c.done > 0) : [];
+
+  const strategyStr = stratCatHealth.length > 0
+    ? stratCatHealth
+        .sort((a, b) => b.overdue - a.overdue || b.open - a.open)
+        .slice(0, 10)
+        .map(c => {
+          const status = c.overdue > 0 ? ` ⚠ ${c.overdue} OVERDUE` : '';
+          return `- ${c.name} (score ${c.score}/10): ${c.open} open tasks, ${c.done} done${status}${c.ninetyDayResult ? ' | Goal: ' + c.ninetyDayResult.slice(0, 80) : ''}`;
+        })
+        .join('\n')
+    : '';
 
   const prioStr = [
     priorities.quarter ? `Quarterly: ${priorities.quarter}` : '',
@@ -214,7 +238,7 @@ async function generateWeeklyBriefing(data, categories, priorities, today, strat
 RPM VISION & GOALS:
 ${catVisionStr || 'Not yet defined'}
 
-${strategyStr ? `TOP STRATEGIC CATEGORIES (score 5+):\n${strategyStr}\n` : ''}
+${strategyStr ? `STRATEGY CATEGORY TASK HEALTH (sorted by urgency):\n${strategyStr}\n` : ''}
 STRATEGIC PRIORITIES:
 ${prioStr || 'Not set — encourage Jacy to set these in the dashboard'}
 
@@ -251,7 +275,7 @@ Write Jacy's WEEKLY RPM review. Be direct, sharp, and constructive. Acknowledge 
 
 **VICTORIES THIS WEEK**: List up to 5 specific wins from the completed tasks. Bold and celebrate these.
 
-**PATTERNS & TRENDS** (3-4 sentences): What patterns do you see across streams? Where is momentum building? Where is it stalling? Any streams being neglected?
+**PATTERNS & TRENDS** (3-4 sentences): What patterns do you see across streams? Where is momentum building? Where is it stalling? Any streams being neglected? Call out any RPM strategy categories with overdue tasks.
 
 **GOAL ALIGNMENT** (2-3 sentences): How well did this week's work connect to the stated quarterly/monthly priorities? Be specific about gaps or wins.
 
@@ -442,7 +466,7 @@ module.exports = async function handler(req, res) {
     const weeklyData = computeWeekly(tasks, log, categories, today);
     console.log(`Weekly data: ${weeklyData.completedCount} completed, ${weeklyData.overdue.length} overdue`);
 
-    const briefingText = await generateWeeklyBriefing(weeklyData, categories, priorities, today, strategy);
+    const briefingText = await generateWeeklyBriefing(weeklyData, categories, priorities, today, strategy, tasks);
     console.log('Weekly AI briefing generated');
 
     const emailHtml = buildWeeklyEmail(briefingText, weeklyData, categories, today);
