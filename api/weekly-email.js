@@ -15,7 +15,7 @@ async function loadData() {
   const sheets = await getSheetsClient();
   const spreadsheetId = '1SK3hsYiff-P3KK96k7cEiFhORB25BROFzS5ADE3XACM';
   const [tasksRes, logRes, catRes, prioRes, stratRes] = await Promise.all([
-    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:N' }),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:P' }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Log!A:F' }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Categories!A:H' }).catch(() => ({ data: { values: [] } })),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Priorities!A1' }).catch(() => ({ data: { values: [] } })),
@@ -28,7 +28,8 @@ async function loadData() {
     categoryId: r[8] || '', createdAt: r[9] || '',
     isDailyVictory: toBool(r[10]), isWeeklyFocus: toBool(r[11]),
     delegateIntent: toBool(r[12]), delegatedTo: r[13] || '',
-  }));
+    isGhost: toBool(r[14]), isArchived: toBool(r[15]),
+  })).filter(t => !t.isArchived);
   const log = (logRes.data.values || []).slice(1).map(r => ({
     taskId: r[0] || '', completedAt: r[1] || '', dueDate: r[2] || '',
     daysLate: r[3] ?? null, weekStart: r[4] || '', delegatedTo: r[5] || '',

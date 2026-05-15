@@ -18,7 +18,7 @@ async function loadData() {
   const spreadsheetId = '1SK3hsYiff-P3KK96k7cEiFhORB25BROFzS5ADE3XACM';
 
   const [tasksRes, logRes, catRes, prioRes, stratRes] = await Promise.all([
-    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:N' }),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:P' }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Log!A:F' }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Categories!A:H' }).catch(() => ({ data: { values: [] } })),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Priorities!A1' }).catch(() => ({ data: { values: [] } })),
@@ -32,7 +32,8 @@ async function loadData() {
     categoryId: r[8] || '', createdAt: r[9] || '',
     isDailyVictory: toBool(r[10]), isWeeklyFocus: toBool(r[11]),
     delegateIntent: toBool(r[12]), delegatedTo: r[13] || '',
-  }));
+    isGhost: toBool(r[14]), isArchived: toBool(r[15]),
+  })).filter(t => !t.isArchived); // exclude archived tasks
 
   const log = (logRes.data.values || []).slice(1).map(r => ({
     taskId: r[0] || '', completedAt: r[1] || '', dueDate: r[2] || '',
@@ -118,11 +119,35 @@ async function generateBriefing(data, categories, today, strategy) {
     .map(c => `- ${c.name}: ${c.vision}`)
     .join('\n');
 
-  const strategyStr = strategy ? (strategy.categories || [])
-    .filter(c => c.score >= 5)
-    .slice(0, 5)
-    .map(c => `- ${c.name}: 90-day result = ${(c.ninetyDayResult || '').slice(0, 100)}`)
-    .join('\n') : '';
+  // Child stream → parent RPM category mapping (mirrors CHILD_STREAMS in frontend)
+  const childStreamParents = { sales: 'rpm-08', innovation: 'rpm-08', marketing: 'rpm-08' };
+
+  // Per-RPM-category task health (using stream field, which IS the rpm category id)
+  const stratCatHealth = strategy ? (strategy.categories || []).map(cat => {
+    const linked = (pending || []).filter(t =>
+      t.stream === cat.id || childStreamParents[t.stream] === cat.id
+    );
+    const overdueLinked = linked.filter(t => t.dueDate && t.dueDate < today);
+    const doneLinked = tasks.filter(t =>
+      (t.stream === cat.id || childStreamParents[t.stream] === cat.id) && t.done
+    );
+    return {
+      name: cat.name, score: cat.score || 0,
+      open: linked.length, overdue: overdueLinked.length, done: doneLinked.length,
+      ninetyDayResult: cat.ninetyDayResult || '',
+    };
+  }).filter(c => c.open > 0 || c.overdue > 0 || c.done > 0) : [];
+
+  const strategyStr = stratCatHealth.length > 0
+    ? stratCatHealth
+        .sort((a, b) => b.overdue - a.overdue || b.open - a.open)
+        .slice(0, 10)
+        .map(c => {
+          const status = c.overdue > 0 ? ` ⚠ ${c.overdue} OVERDUE` : '';
+          return `- ${c.name} (score ${c.score}/10): ${c.open} open tasks, ${c.done} done${status}${c.ninetyDayResult ? ' | Goal: ' + c.ninetyDayResult.slice(0, 80) : ''}`;
+        })
+        .join('\n')
+    : '';
 
   const overdueStr = overdue.slice(0, 8)
     .map(t => `• ${t.text} (${daysDiff(t.dueDate, today)}d late, ${t.stream})`)
@@ -162,7 +187,7 @@ async function generateBriefing(data, categories, today, strategy) {
 JACY'S RPM VISION (what drives their goals):
 ${catVisionStr || 'Not yet defined'}
 
-${strategyStr ? `TOP STRATEGIC CATEGORIES (score 5+):\n${strategyStr}\n` : ''}
+${strategyStr ? `STRATEGY CATEGORY TASK HEALTH (sorted by urgency):\n${strategyStr}\n` : ''}
 ${prioStr ? `JACY'S STRATEGIC PRIORITIES:\n${prioStr}\n` : ''}
 TODAY'S SITUATION:
 Overdue tasks (${overdue.length} total):
@@ -190,7 +215,7 @@ Write Jacy's morning briefing with the following structure. Be direct, sharp, an
 
 **STRATEGIC FOCUS** (2-3 sentences): What's the single most important thing to move on today and why? Reference their vision where relevant.
 
-**PATTERNS & RISKS** (2-3 sentences): What patterns do you notice in the data? Any risks, blockers or neglected areas worth flagging?
+**PATTERNS & RISKS** (2-3 sentences): What patterns do you notice in the data? Call out any RPM strategy categories with overdue tasks or zero tasks (blind spots). Any risks, blockers or neglected areas worth flagging?
 
 **DELEGATION NUDGE** (1-2 sentences): Specific advice about their delegation habit — what should they be handing off, or what's stuck?
 
