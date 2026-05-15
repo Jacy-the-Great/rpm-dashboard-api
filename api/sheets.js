@@ -42,8 +42,8 @@ async function readSheets() {
   const sheets = await getSheetsClient();
   const spreadsheetId = PRIMARY_ID;
 
-  // Tasks A:N — 14 columns (Wave 2 adds delegateIntent col M, delegatedTo col N)
-  const tasksRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:N' });
+  // Tasks A:P — 16 columns (Wave 7 adds isGhost col O, isArchived col P)
+  const tasksRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:P' });
 
   // Log A:F — 6 columns (Wave 2 adds delegatedTo col F)
   const logRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Log!A:F' });
@@ -75,7 +75,7 @@ async function readSheets() {
   const logData  = logRes.data.values   || [];
 
   // Tasks: id, stream, text, pri, dueDate, note, done, subs, categoryId,
-  //        createdAt, isDailyVictory, isWeeklyFocus, delegateIntent, delegatedTo
+  //        createdAt, isDailyVictory, isWeeklyFocus, delegateIntent, delegatedTo, isGhost, isArchived
   const tasks = taskData.slice(1).map(row => ({
     id:             row[0]  || '',
     stream:         row[1]  || '',
@@ -91,6 +91,8 @@ async function readSheets() {
     isWeeklyFocus:  toBool(row[11]),
     delegateIntent: toBool(row[12]),
     delegatedTo:    row[13] || '',
+    isGhost:        toBool(row[14]),
+    isArchived:     toBool(row[15]),
   }));
 
   // Log: taskId, completedAt, dueDate, daysLate, weekStart, delegatedTo
@@ -120,7 +122,7 @@ async function readSheets() {
 
 function buildSheetData(tasks, log, categories) {
   const tasksData = [
-    ['id','stream','text','pri','dueDate','note','done','subs','categoryId','createdAt','isDailyVictory','isWeeklyFocus','delegateIntent','delegatedTo'],
+    ['id','stream','text','pri','dueDate','note','done','subs','categoryId','createdAt','isDailyVictory','isWeeklyFocus','delegateIntent','delegatedTo','isGhost','isArchived'],
     ...(tasks || []).map(t => [
       t.id || '', t.stream || '', t.text || '', t.pri || 'normal',
       t.dueDate || '', t.note || '', t.done || false,
@@ -128,6 +130,7 @@ function buildSheetData(tasks, log, categories) {
       t.categoryId || '', t.createdAt || '',
       t.isDailyVictory || false, t.isWeeklyFocus || false,
       t.delegateIntent || false, t.delegatedTo || '',
+      t.isGhost || false, t.isArchived || false,
     ])
   ];
   const logData = [
@@ -153,7 +156,7 @@ async function writeToSheet(sheets, spreadsheetId, tasksData, logData, categorie
   await ensureSheetExists(sheets, spreadsheetId, 'Tasks');
   await ensureSheetExists(sheets, spreadsheetId, 'Log');
   await ensureSheetExists(sheets, spreadsheetId, 'Categories');
-  await sheets.spreadsheets.values.clear({ spreadsheetId, range: 'Tasks!A:N' });
+  await sheets.spreadsheets.values.clear({ spreadsheetId, range: 'Tasks!A:P' });
   await sheets.spreadsheets.values.append({ spreadsheetId, range: 'Tasks!A1', valueInputOption: 'USER_ENTERED', resource: { values: tasksData } });
   await sheets.spreadsheets.values.clear({ spreadsheetId, range: 'Log!A:F' });
   await sheets.spreadsheets.values.append({ spreadsheetId, range: 'Log!A1', valueInputOption: 'USER_ENTERED', resource: { values: logData } });
