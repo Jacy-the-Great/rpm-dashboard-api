@@ -18,7 +18,7 @@ async function loadData() {
   const spreadsheetId = '1SK3hsYiff-P3KK96k7cEiFhORB25BROFzS5ADE3XACM';
 
   const [tasksRes, logRes, catRes, prioRes, stratRes] = await Promise.all([
-    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:P' }),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:Q' }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Log!A:F' }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Categories!A:H' }).catch(() => ({ data: { values: [] } })),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Priorities!A1' }).catch(() => ({ data: { values: [] } })),
@@ -33,6 +33,7 @@ async function loadData() {
     isDailyVictory: toBool(r[10]), isWeeklyFocus: toBool(r[11]),
     delegateIntent: toBool(r[12]), delegatedTo: r[13] || '',
     isGhost: toBool(r[14]), isArchived: toBool(r[15]),
+    reward: r[16] || '',
   })).filter(t => !t.isArchived); // exclude archived tasks
 
   const log = (logRes.data.values || []).slice(1).map(r => ({
@@ -76,6 +77,11 @@ function fmtDate(d) {
 function daysDiff(a, b) {
   return Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
 }
+function yesterdayOf(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
 
 // ── Compute briefing data ─────────────────────────────────────────────────────
 function leafCount(t) { return 1 + (t.subs || []).length; }
@@ -108,12 +114,18 @@ function computeBriefing(tasks, log, categories, today) {
     return { ...c, total, done, open: total - done, pct: total > 0 ? Math.round(done / total * 100) : 0 };
   }).filter(c => c.total > 0);
 
-  return { pending, overdue, dueToday, victories, pendingDelegations, weeklyFocus, completionRate, recentLog, catStats, totalItems, doneItems, openItems };
+  // Tasks completed yesterday (for reward callouts)
+  const yesterday = yesterdayOf(today);
+  const completedYesterday = log.filter(e => e.completedAt === yesterday)
+    .map(e => tasks.find(t => t.id === e.taskId))
+    .filter(Boolean);
+
+  return { pending, overdue, dueToday, victories, pendingDelegations, weeklyFocus, completionRate, recentLog, catStats, totalItems, doneItems, openItems, completedYesterday };
 }
 
 // ── AI Synthesis ──────────────────────────────────────────────────────────────
-async function generateBriefing(data, categories, today, strategy) {
-  const { overdue, dueToday, victories, pendingDelegations, pending, completionRate, weeklyFocus, catStats, openItems, totalItems } = data;
+async function generateBriefing(data, categories, today, strategy, tasks) {
+  const { overdue, dueToday, victories, pendingDelegations, pending, completionRate, weeklyFocus, catStats, openItems, totalItems, completedYesterday } = data;
 
   const catVisionStr = categories.filter(c => !c.archived && c.vision)
     .map(c => `- ${c.name}: ${c.vision}`)
@@ -175,6 +187,11 @@ async function generateBriefing(data, categories, today, strategy) {
     .map(c => `• ${c.name}: ${c.done}/${c.total} done (${c.pct}%)`)
     .join('\n');
 
+  const rewardsYesterdayStr = (completedYesterday || [])
+    .filter(t => t.reward)
+    .map(t => `• ${t.text} → ${t.reward}`)
+    .join('\n');
+
   const prioStr = [
     data.priorities?.quarter ? `Quarterly priority: ${data.priorities.quarter}` : '',
     data.priorities?.month   ? `Monthly priority: ${data.priorities.month}` : '',
@@ -189,6 +206,7 @@ ${catVisionStr || 'Not yet defined'}
 
 ${strategyStr ? `STRATEGY CATEGORY TASK HEALTH (sorted by urgency):\n${strategyStr}\n` : ''}
 ${prioStr ? `JACY'S STRATEGIC PRIORITIES:\n${prioStr}\n` : ''}
+${rewardsYesterdayStr ? `REWARDS EARNED YESTERDAY (acknowledge these warmly, briefly):\n${rewardsYesterdayStr}\n` : ''}
 TODAY'S SITUATION:
 Overdue tasks (${overdue.length} total):
 ${overdueStr}
@@ -238,7 +256,8 @@ Keep the total under 300 words. Write in second person ("You have...", "Your..."
 
 // ── HTML Email ────────────────────────────────────────────────────────────────
 function buildEmail(briefingText, data, today) {
-  const { overdue, dueToday, victories, pendingDelegations, completionRate, openItems, totalItems } = data;
+  const { overdue, dueToday, victories, pendingDelegations, completionRate, openItems, totalItems, completedYesterday } = data;
+  const rewardsYesterday = (completedYesterday || []).filter(t => t.reward);
 
   const priColor = { urgent: '#a32d2d', priority: '#993c1d', normal: '#555', backburner: '#888' };
 
@@ -289,6 +308,18 @@ function buildEmail(briefingText, data, today) {
     <div style="font-size:11px;font-weight:700;color:#BA7517;text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px">🤖 Strategic Briefing</div>
     <div style="font-size:13px;color:#333">${briefingHtml}</div>
   </div>
+
+  ${rewardsYesterday.length > 0 ? `
+  <!-- Rewards Earned -->
+  <div style="background:#fffaf0;border-radius:10px;padding:16px 24px;margin-bottom:16px;border:1px solid #f0e0c0">
+    <div style="font-size:11px;font-weight:700;color:#BA7517;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">🎁 Rewards Earned Yesterday</div>
+    ${rewardsYesterday.map(t => `
+      <div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px">
+        <span style="color:#222">${t.text}</span>
+        <span style="color:#999">→</span>
+        <span style="color:#7a5c0a;font-weight:600">${t.reward}</span>
+      </div>`).join('')}
+  </div>` : ''}
 
   ${dueToday.length > 0 ? `
   <!-- Due Today -->
@@ -368,7 +399,7 @@ module.exports = async function handler(req, res) {
 
     console.log(`Loaded: ${tasks.length} tasks, ${briefingData.overdue.length} overdue, ${briefingData.dueToday.length} due today`);
 
-    const briefingText = await generateBriefing(briefingData, categories, today, strategy);
+    const briefingText = await generateBriefing(briefingData, categories, today, strategy, tasks);
     console.log('AI briefing generated');
 
     const emailHtml = buildEmail(briefingText, briefingData, today);

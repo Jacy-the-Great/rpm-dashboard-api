@@ -15,7 +15,7 @@ async function loadData() {
   const sheets = await getSheetsClient();
   const spreadsheetId = '1SK3hsYiff-P3KK96k7cEiFhORB25BROFzS5ADE3XACM';
   const [tasksRes, logRes, catRes, prioRes, stratRes] = await Promise.all([
-    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:P' }),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: 'Tasks!A:Q' }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Log!A:F' }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Categories!A:H' }).catch(() => ({ data: { values: [] } })),
     sheets.spreadsheets.values.get({ spreadsheetId, range: 'Priorities!A1' }).catch(() => ({ data: { values: [] } })),
@@ -29,6 +29,7 @@ async function loadData() {
     isDailyVictory: toBool(r[10]), isWeeklyFocus: toBool(r[11]),
     delegateIntent: toBool(r[12]), delegatedTo: r[13] || '',
     isGhost: toBool(r[14]), isArchived: toBool(r[15]),
+    reward: r[16] || '',
   })).filter(t => !t.isArchived);
   const log = (logRes.data.values || []).slice(1).map(r => ({
     taskId: r[0] || '', completedAt: r[1] || '', dueDate: r[2] || '',
@@ -208,7 +209,7 @@ async function generateWeeklyBriefing(data, categories, priorities, today, strat
   ].filter(Boolean).join('\n');
 
   const completedStr = completedThisWeek.slice(0, 12)
-    .map(t => `• ${t.text} [${t.stream}]`)
+    .map(t => `• ${t.text} [${t.stream}]${t.reward ? ' — reward: ' + t.reward : ''}`)
     .join('\n') || 'None recorded';
 
   const focusStr = weeklyFocus.length > 0
@@ -307,8 +308,9 @@ function buildWeeklyEmail(briefingText, data, categories, today) {
     overdue, dueNextWeek, pendingDelegations,
     delegatedThisWeek, onTime, late,
     byStream, catProgress, oldOpen, open,
-    totalItems, doneItems,
+    totalItems, doneItems, completedThisWeek,
   } = data;
+  const rewardsThisWeek = (completedThisWeek || []).filter(t => t.reward);
 
   const briefingHtml = briefingText
     .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#222">$1</strong>')
@@ -383,6 +385,18 @@ function buildWeeklyEmail(briefingText, data, categories, today) {
         ${sub ? `<div style="font-size:10px;color:#888;margin-top:2px">${sub}</div>` : ''}
       </div>`).join('')}
   </div>
+
+  ${rewardsThisWeek.length > 0 ? `
+  <!-- Rewards This Week -->
+  <div style="background:#fffaf0;border-radius:10px;padding:20px 24px;margin-bottom:16px;border:1px solid #f0e0c0">
+    <div style="font-size:11px;font-weight:700;color:#BA7517;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">🎁 Rewards This Week</div>
+    ${rewardsThisWeek.map(t => `
+      <div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px">
+        <span style="color:#222">${t.text}</span>
+        <span style="color:#999">→</span>
+        <span style="color:#7a5c0a;font-weight:600">${t.reward}</span>
+      </div>`).join('')}
+  </div>` : ''}
 
   ${weeklyFocus.length > 0 ? `
   <!-- Weekly Focus -->
